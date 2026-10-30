@@ -132,47 +132,66 @@ async function loadMap() {
   $("#rundetails").innerHTML = run ? runDetails(run) : "";
   if (run) $("#runcsv").onclick = () => { location.href = `/api/runs/${encodeURIComponent(run.id)}/export.csv`; };
   const raw = await api(live ? "/api/positions?limit=" + $("#npts").value : `/api/runs/${encodeURIComponent(src)}/positions`);
-  const c = $("#map"), ctx = c.getContext("2d");
-  const a = rotationDeg * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
-  const p = raw.map(q => ({...q, x: q.x * cos - q.y * sin, y: q.x * sin + q.y * cos}));  // drawn copy; info text uses raw values
-  const css = getComputedStyle(document.documentElement), ink = css.getPropertyValue("--accent"), muted = css.getPropertyValue("--muted");
-  ctx.clearRect(0, 0, c.width, c.height);
   drawCompass();
-  if (!p.length) { $("#posinfo").textContent = "No pose coordinates observed. The absence of pose is itself an observation."; return; }
-  const xs = p.map(q => q.x), ys = p.map(q => q.y), mnx = Math.min(...xs), mxx = Math.max(...xs), mny = Math.min(...ys), mxy = Math.max(...ys);
-  const pad = 100, s = Math.min((c.width - 2 * pad) / Math.max(1, mxx - mnx), (c.height - 2 * pad) / Math.max(1, mxy - mny));  // room for arrow and compass
-  const X = x => pad + (x - mnx) * s, Y = y => c.height - pad - (y - mny) * s;
-  ctx.lineWidth = 4; ctx.lineJoin = "round"; ctx.strokeStyle = ink; ctx.beginPath();  // canvas is 1200 px wide, shown much smaller on a phone
-  p.forEach((q, i) => i ? ctx.lineTo(X(q.x), Y(q.y)) : ctx.moveTo(X(q.x), Y(q.y))); ctx.stroke();
-  const dotAt = (q, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(q.x), Y(q.y), 12, 0, 7); ctx.fill(); };
-  dotAt(p[0], muted); dotAt(p[p.length - 1], ink);
-  const last = raw[raw.length - 1];
-  if (last.theta != null) arrow(ctx, X(p[p.length - 1].x), Y(p[p.length - 1].y), last.theta + rotationDeg, 70, ink, 5);
-  // Reported ranges come from the stored values, not from the rotated drawing.
-  const rx = raw.map(q => q.x), ry = raw.map(q => q.y), [rnx, rxx, rny, rxy] = [Math.min(...rx), Math.max(...rx), Math.min(...ry), Math.max(...ry)];
-  const still = rnx === rxx && rny === rxy;
-  $("#posinfo").innerHTML = `${p.length} positions (${esc(fmtTime(raw[0].received_at || raw[0].observed_at))} → ${esc(fmtTime(last.received_at || last.observed_at))}) · stored x ${rnx}…${rxx} · y ${rny}…${rxy}` +
-    ` · latest θ <b>${last.theta ?? "—"}°</b> (as reported)` +
-    (still ? " · <b>all identical: the robot has not moved (probably on its dock)</b>" : " · grey dot = start, blue dot = latest position");
+  drawPath(raw);
 }
+let lastRaw = [];
+// Drawn at the screen's real resolution, so line widths and marker sizes are actual CSS pixels on any device.
+function drawPath(raw) {
+  lastRaw = raw;
+  const c = $("#map"), ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1, cw = c.clientWidth, ch = c.clientHeight;
+  c.width = Math.round(cw * dpr); c.height = Math.round(ch * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const css = getComputedStyle(document.documentElement), tok = n => css.getPropertyValue(n).trim();
+  const ink = tok("--accent"), head = tok("--head"), muted = tok("--muted"), surface = tok("--code");
+  if (!raw.length) {
+    $("#trajlegend").innerHTML = "";
+    $("#posinfo").textContent = "No pose coordinates observed. The absence of pose is itself an observation."; return;
+  }
+  const a = rotationDeg * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
+  const p = raw.map(q => ({x: q.x * cos - q.y * sin, y: q.x * sin + q.y * cos}));  // drawn copy; captions use stored values
+  const xs = p.map(q => q.x), ys = p.map(q => q.y), mnx = Math.min(...xs), mxx = Math.max(...xs), mny = Math.min(...ys), mxy = Math.max(...ys);
+  const pad = 22, s = Math.min((cw - 2 * pad) / Math.max(1, mxx - mnx), (ch - 2 * pad) / Math.max(1, mxy - mny));
+  const ox = (cw - (mxx - mnx) * s) / 2, oy = (ch - (mxy - mny) * s) / 2;  // centred in the frame
+  const X = x => ox + (x - mnx) * s, Y = y => ch - oy - (y - mny) * s;
+  ctx.globalAlpha = 0.85; ctx.lineWidth = 1.5; ctx.lineJoin = ctx.lineCap = "round"; ctx.strokeStyle = ink; ctx.beginPath();
+  p.forEach((q, i) => i ? ctx.lineTo(X(q.x), Y(q.y)) : ctx.moveTo(X(q.x), Y(q.y))); ctx.stroke(); ctx.globalAlpha = 1;
+  const dot = (q, r, col) => { ctx.beginPath(); ctx.arc(X(q.x), Y(q.y), r + 2, 0, 7); ctx.fillStyle = surface; ctx.fill();  // 2px surface ring
+    ctx.beginPath(); ctx.arc(X(q.x), Y(q.y), r, 0, 7); ctx.fillStyle = col; ctx.fill(); };
+  const last = raw[raw.length - 1], end = p[p.length - 1];
+  dot(p[0], 4, muted);
+  if (last.theta != null) arrow(ctx, X(end.x), Y(end.y), last.theta + rotationDeg, 18, head, 2, 6, surface);
+  dot(end, 4.5, head);
+  const rx = raw.map(q => q.x), ry = raw.map(q => q.y), [rnx, rxx, rny, rxy] = [Math.min(...rx), Math.max(...rx), Math.min(...ry), Math.max(...ry)];
+  const still = rnx === rxx && rny === rxy, when = q => fmtTime(q.received_at || q.observed_at);
+  $("#trajlegend").innerHTML = `<span><i class="swl" style="background:var(--accent)"></i>path</span><span><i class="sw" style="background:var(--muted)"></i>start</span>` +
+    `<span><i class="sw" style="background:var(--head)"></i>latest position → heading θ ${last.theta ?? "—"}°</span>`;
+  $("#posinfo").innerHTML = still ? `${raw.length} positions, all identical: the robot has not moved (probably on its dock).`
+    : `${raw.length} positions · ${esc(when(raw[0]))} → ${esc(when(last))}<br>stored x ${rnx} … ${rxx}, y ${rny} … ${rxy} (unit not confirmed)`;
+}
+window.addEventListener("resize", () => { if (active === "traj" && lastRaw.length) drawPath(lastRaw); });
 // Arrow from (x0, y0) pointing at `deg` (0 = +x, anticlockwise, as the robot reports θ); screen y points down.
-function arrow(ctx, x0, y0, deg, len, col, width) {
+function arrow(ctx, x0, y0, deg, len, col, width, headSize = 6, ring = null) {
   const h = deg * Math.PI / 180, x1 = x0 + len * Math.cos(h), y1 = y0 - len * Math.sin(h);
-  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(x1 + 22 * Math.cos(h), y1 - 22 * Math.sin(h));
-  ctx.lineTo(x1 + 16 * Math.cos(h + 2.2), y1 - 16 * Math.sin(h + 2.2)); ctx.lineTo(x1 + 16 * Math.cos(h - 2.2), y1 - 16 * Math.sin(h - 2.2)); ctx.fill();
+  const draw = (c, w) => {
+    ctx.strokeStyle = c; ctx.fillStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x1 + headSize * Math.cos(h), y1 - headSize * Math.sin(h));
+    ctx.lineTo(x1 + headSize * Math.cos(h + 2.3), y1 - headSize * Math.sin(h + 2.3)); ctx.lineTo(x1 + headSize * Math.cos(h - 2.3), y1 - headSize * Math.sin(h - 2.3)); ctx.closePath(); ctx.fill();
+    if (ring) ctx.stroke();
+  };
+  if (ring) draw(ring, width + 3);  // surface halo keeps the arrow readable over the path
+  draw(col, width);
 }
 // Compass (like a north arrow), outside the plot: where θ = 0° points (the robot's heading on its dock, the x axis)
 // and θ = 90°. θ grows anticlockwise in the x/y frame: checked on run #153, where all 34 straight moves off the
 // x axis matched θ within 15° (median 1.5°). Turns with the display rotation.
 function drawCompass() {
   const pt = (deg, r) => [r * Math.cos(deg * Math.PI / 180), -r * Math.sin(deg * Math.PI / 180)];
-  const [x0, y0] = pt(rotationDeg, 22), [x9, y9] = pt(rotationDeg + 90, 15), [l0x, l0y] = pt(rotationDeg, 33), [l9x, l9y] = pt(rotationDeg + 90, 32);
-  $("#compass").innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
-    <g style="color:var(--accent)" fill="none" stroke="currentColor"><circle r="26" stroke="var(--line)" stroke-width="2"/>
+  const [x0, y0] = pt(rotationDeg, 16), [x9, y9] = pt(rotationDeg + 90, 15), [l0x, l0y] = pt(rotationDeg, 33), [l9x, l9y] = pt(rotationDeg + 90, 32);
+  $("#compass").innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="3" markerHeight="3" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--head)"/></marker></defs>
+    <g style="color:var(--head)" fill="none" stroke="currentColor"><circle r="26" stroke="var(--line)" stroke-width="2"/>
     <line x1="0" y1="0" x2="${x0}" y2="${y0}" stroke-width="4" marker-end="url(#ah)"/>
     <line x1="0" y1="0" x2="${x9}" y2="${y9}" stroke-width="2" stroke="var(--muted)" stroke-dasharray="3 2"/></g>
-    <text x="${l0x}" y="${l0y}" font-size="11" font-weight="700" text-anchor="middle" dominant-baseline="middle" fill="var(--accent)">0°</text>
+    <text x="${l0x}" y="${l0y}" font-size="11" font-weight="700" text-anchor="middle" dominant-baseline="middle" fill="var(--head)">0°</text>
     <text x="${l9x}" y="${l9y}" font-size="9" text-anchor="middle" dominant-baseline="middle" fill="var(--muted)">90°</text>`;
 }
 
