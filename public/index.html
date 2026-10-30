@@ -1,0 +1,125 @@
+<!doctype html>
+<!-- RoombaLab web UI. Uses: /app.js, the JSON API in src/roombalab/server.py. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RoombaLab</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--ink:#1c1f24;--muted:#646b75;--line:#dde1e6;--accent:#1f6feb;--ok:#1a7f37;--bad:#cf222e;--warn:#9a6700;
+ --ctrl:#fff4e5;--ctrl-line:#e8a33d;--code:#f0f2f4;--chip:#eef1f4}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1116;--card:#161b22;--ink:#e6edf3;--muted:#8d96a0;--line:#2d333b;
+ --accent:#4493f8;--ok:#3fb950;--bad:#f85149;--warn:#d29922;--ctrl:#2a2113;--ctrl-line:#9e6a03;--code:#0b0e13;--chip:#21262d}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line)}
+.top{display:flex;align-items:center;gap:12px;padding:10px 16px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:17px}.brand small{color:var(--muted);font-weight:500}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:99px;background:var(--chip);font-size:13px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}.dot.on{background:var(--ok)}.dot.off{background:var(--bad)}
+nav{display:flex;gap:4px;overflow-x:auto;padding:0 12px;scrollbar-width:none}
+nav button{border:0;background:none;color:var(--muted);padding:10px 12px;font:inherit;font-weight:600;border-bottom:3px solid transparent;white-space:nowrap;cursor:pointer}
+nav button.on{color:var(--ink);border-bottom-color:var(--accent)}
+main{max-width:1200px;margin:0 auto;padding:16px}
+.panel{display:none}.panel.on{display:block}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px;min-width:0}
+.card h2{font-size:16px;margin:0 0 4px}.card .sub{color:var(--muted);font-size:13px;margin:0 0 12px}
+.card.control{background:var(--ctrl);border-color:var(--ctrl-line)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.stat{background:var(--chip);border-radius:10px;padding:10px}.stat .k{font-size:12px;color:var(--muted)}.stat .v{font-size:17px;font-weight:650;margin-top:2px;overflow-wrap:anywhere}
+.stat .s{font-size:12px;color:var(--muted)}
+.bar{height:8px;border-radius:5px;background:var(--line);overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;background:var(--ok)}
+.btns{display:flex;flex-wrap:wrap;gap:8px}
+button.b{font:inherit;font-weight:600;padding:9px 14px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+button.b.primary{background:var(--accent);border-color:var(--accent);color:#fff}button.b:disabled{opacity:.5;cursor:default}
+.ctrl{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;max-width:560px}
+.ctrl button.b{min-height:48px;padding:12px 6px;font-size:16px}.ctrl .wide{grid-column:1/-1;min-height:56px;font-size:18px}
+.ctrlstate{font-size:17px;font-weight:650;margin:2px 0 12px}.ctrlstate small{font-weight:500;color:var(--muted);font-size:13px}
+.msg{margin-top:10px;font-size:13px;min-height:1em}.msg.ok{color:var(--ok)}.msg.bad{color:var(--bad)}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;white-space:nowrap}td.path{font-family:ui-monospace,Menlo,monospace;font-size:12px;overflow-wrap:anywhere}
+code,pre{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-word;max-height:380px;overflow:auto;margin:6px 0 0}
+button.link{color:var(--accent);background:none;border:0;padding:0;font:inherit;cursor:pointer;text-decoration:underline;font-size:12px}
+.tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:5px;background:var(--chip);color:var(--muted);letter-spacing:.02em}
+.tag.raw{background:#ddf4ff;color:#0550ae}.tag.int{background:#fbefff;color:#8250df}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .tag.raw{background:#0c2d6b;color:#a5d6ff}:root:not([data-theme="light"]) .tag.int{background:#2f1b4a;color:#d2a8ff}}
+.muted{color:var(--muted)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+label.chk{display:inline-flex;gap:6px;align-items:center;font-size:13px}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+textarea{width:100%;min-height:150px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+canvas{width:100%;aspect-ratio:12/7;background:var(--code);border:1px solid var(--line);border-radius:8px;display:block}
+.banner{padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:14px}.banner.ok{background:#dafbe1;color:#116329}.banner.bad{background:#ffebe9;color:#a40e26}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .banner.ok{background:#12261e;color:#56d364}:root:not([data-theme="light"]) .banner.bad{background:#2d1214;color:#ff7b72}}
+h3{font-size:14px;margin:16px 0 6px}
+.week td{vertical-align:middle}
+details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:10px}
+@media (max-width:520px){main{padding:10px}.card{padding:12px}.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}
+ .ctrl{grid-template-columns:1fr 1fr}.ctrl button.b{min-height:52px}}
+</style></head><body>
+<header>
+ <div class="top"><span class="brand">RoombaLab <small>0.2</small></span>
+  <span class="pill"><span class="dot" id="dot"></span><span id="status">…</span></span>
+  <span class="muted" id="lastmsg" style="font-size:13px"></span></div>
+ <nav id="tabs">
+  <button data-tab="dash" class="on">Robot</button><button data-tab="traj">Trajectory</button><button data-tab="raw">Raw data</button>
+  <button data-tab="transform">Transformation</button><button data-tab="diag">Diagnostics</button><button data-tab="schedule">Schedule</button>
+ </nav>
+</header>
+<main>
+<section id="dash" class="panel on">
+ <div class="card control"><h2>Control</h2>
+  <div class="ctrlstate" id="ctrlstate">…</div>
+  <div class="ctrl"><button class="b primary wide" data-cmd="clean">Clean</button><button class="b" data-cmd="pause">Pause</button>
+   <button class="b" data-cmd="resume">Resume</button><button class="b" data-cmd="stop">Stop</button><button class="b" data-cmd="dock">Dock</button></div>
+  <div class="msg" id="cmdmsg"></div>
+  <p class="sub" style="margin:8px 0 0">Every command is logged; “published” does not prove it was carried out — the state above confirms it.</p>
+  <details><summary>Recent commands</summary><div class="scroll" id="cmdlog"></div></details></div>
+ <div class="card"><h2 id="rname">Robot</h2><p class="sub">Latest values reported by the robot. Each value links to its raw message (#).</p>
+  <div class="stats" id="rstats"></div></div>
+ <div class="card"><h2>Latest observations</h2>
+  <div class="row"><label class="chk"><input type="checkbox" id="showsignal"> Include Wi-Fi signal (published every ~6 s)</label></div>
+  <div class="scroll" id="latest"></div></div>
+</section>
+
+<section id="traj" class="panel">
+ <div class="card"><h2>Trajectory</h2><p class="sub">Plot of the x/y values actually reported by the robot, with no unit conversion and no cloud map. It is not an exact floor plan.</p>
+  <div class="row"><label>Points <select id="npts"><option value="500">last 500</option><option value="2000" selected>last 2,000</option><option value="20000">last 20,000</option></select></label></div>
+  <canvas id="map" width="1200" height="700"></canvas><p class="muted" id="posinfo"></p></div>
+</section>
+
+<section id="raw" class="panel">
+ <div class="card"><h2>Raw data log (append-only)</h2><p class="sub">Exact payload of every message, its SHA-256 and the hash chain. Click a number to see how it was transformed.</p>
+  <div id="verifyres"></div>
+  <div class="row btns"><button class="b primary" id="verify">Verify integrity</button><button class="b" id="export">Export JSONL</button>
+   <button class="b" id="dbsnap">Copy database to data/snapshots</button></div>
+  <div class="row"><select id="rawop"><option value="">All operations</option><option value="shadow">Shadow (robot state)</option><option value="wifistat">wifistat (signal)</option>
+   <option value="connection">Connection</option><option value="cache:">roombapy cache</option></select>
+   <label class="chk"><input type="checkbox" id="rawerr"> Parse errors only</label><span class="muted" id="counts"></span></div>
+  <div class="scroll" id="rawtable"></div></div>
+</section>
+
+<section id="transform" class="panel">
+ <div class="card"><h2>RAW → PARSED → NORMALISED / INTERPRETED</h2><p class="sub">Follow one piece of data from its raw form to its interpretation.</p>
+  <div class="row"><label>Message # <input id="tid" type="number" min="1" style="width:110px"></label><button class="b primary" id="loadt">Show</button></div>
+  <div id="tview"></div></div>
+</section>
+
+<section id="diag" class="panel">
+ <div class="card"><h2>Diagnostics</h2><p class="sub"><span class="tag raw">MEASURED</span> value reported by the robot · <span class="tag int">INTERPRETED</span> label added by RoombaLab.
+  A rising counter proves the counter rose, not that something is broken. Per-mission deltas are planned (dossier §10).</p>
+  <div id="diagview"></div>
+  <details><summary>Log the accumulated state (roombapy cache — not a new message from the robot)</summary>
+   <div class="row" style="margin-top:8px"><button class="b" id="snap">Log accumulated state</button></div><div id="snapres"></div></details></div>
+</section>
+
+<section id="schedule" class="panel">
+ <div class="card"><h2>Weekly schedule</h2><p class="sub">Schedule reported by the robot (<code>cleanSchedule</code>). A configured schedule does not prove a clean took place (TP 8).
+  Day order: index 0 = Sunday, inferred from dorita980's examples.</p>
+  <div class="row btns"><button class="b" id="gets">Read reported schedule</button><button class="b primary" id="sets">Write to robot</button></div>
+  <div class="msg" id="schedmsg"></div>
+  <div class="scroll"><table class="week"><thead><tr><th>Day</th><th>On</th><th>Time</th></tr></thead><tbody id="weekrows"></tbody></table></div>
+  <details><summary>Native JSON sent to the robot</summary><textarea id="week"></textarea></details></div>
+</section>
+</main>
+<script src="/app.js"></script></body></html>

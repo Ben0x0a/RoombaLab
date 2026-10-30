@@ -1,0 +1,19 @@
+services:
+  roombalab:
+    build: .
+    container_name: roombalab
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    env_file: .env
+    # Fixed layout (overrides .env): live DB on a Docker volume opened by this container only,
+    # Mac-readable copy in ./data/snapshots (shared folder).
+    environment:
+      DB_PATH: /db/roombalab.sqlite
+      SNAPSHOT_DIR: /data/snapshots
+    volumes:
+      - db:/db
+      - ./data:/data
+
+volumes:
+  db:

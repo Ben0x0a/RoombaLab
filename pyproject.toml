@@ -1,0 +1,25 @@
+[project]
+name = "roombalab"
+license = "MIT"
+version = "0.2.0"
+description = "Local Roomba 960 forensic telemetry lab"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Exact pin: robot.EvidenceClient overrides a private roombapy method to capture raw bytes.
+    "roombapy==2.0.2",
+    "fastapi>=0.162,<0.163",
+    "uvicorn>=0.54,<0.55",
+]
+
+[project.scripts]
+roombalab = "roombalab.server:main"
+
+[dependency-groups]
+dev = ["pytest>=9.2,<10", "httpx2>=2.16,<3"]  # httpx2: required by fastapi.testclient
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
