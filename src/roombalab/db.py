@@ -45,6 +45,11 @@ CREATE TABLE IF NOT EXISTS parser_errors(
  id INTEGER PRIMARY KEY, raw_message_id INTEGER, occurred_at TEXT NOT NULL,
  stage TEXT NOT NULL, error TEXT NOT NULL
 );
+-- Operational, not robot data: database size sampled by roombalab.retention, for the growth chart.
+CREATE TABLE IF NOT EXISTS storage_samples(
+ id INTEGER PRIMARY KEY, sampled_at TEXT NOT NULL, db_bytes INTEGER NOT NULL,
+ raw_rows INTEGER NOT NULL, usage_json TEXT
+);
 -- Derived (rebuildable): latest robot-reported value per path, so the UI does not scan all observations.
 CREATE TABLE IF NOT EXISTS latest_observations(
  path TEXT PRIMARY KEY, raw_message_id INTEGER NOT NULL, observed_at TEXT NOT NULL,
@@ -54,6 +59,10 @@ CREATE TABLE IF NOT EXISTS latest_observations(
 CREATE INDEX IF NOT EXISTS idx_raw_time ON raw_messages(received_at);
 CREATE INDEX IF NOT EXISTS idx_obs_path ON observations(path);
 CREATE INDEX IF NOT EXISTS idx_pos_time ON positions(observed_at);
+-- Lookups and deletions by source message (transformation view, retention).
+CREATE INDEX IF NOT EXISTS idx_obs_raw ON observations(raw_message_id);
+CREATE INDEX IF NOT EXISTS idx_parsed_raw ON parsed_messages(raw_message_id);
+CREATE INDEX IF NOT EXISTS idx_pos_raw ON positions(raw_message_id);
 """
 # Only values the robot itself reported are "latest state"; connection events and roombapy cache
 # copies (cache:*) are journalled too but use other paths. Used by roombalab.parser.

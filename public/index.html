@@ -41,11 +41,12 @@ code,pre{font-family:ui-monospace,Menlo,monospace;font-size:12px}
 pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-word;max-height:380px;overflow:auto;margin:6px 0 0}
 button.link{color:var(--accent);background:none;border:0;padding:0;font:inherit;cursor:pointer;text-decoration:underline;font-size:12px}
 .tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:5px;background:var(--chip);color:var(--muted);letter-spacing:.02em}
-.tag.raw{background:#ddf4ff;color:#0550ae}.tag.int{background:#fbefff;color:#8250df}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .tag.raw{background:#0c2d6b;color:#a5d6ff}:root:not([data-theme="light"]) .tag.int{background:#2f1b4a;color:#d2a8ff}}
+.tag.raw{background:#ddf4ff;color:#0550ae}.tag.int{background:#fbefff;color:#8250df}.tag.der{background:#fff8c5;color:#7d4e00}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .tag.raw{background:#0c2d6b;color:#a5d6ff}:root:not([data-theme="light"]) .tag.int{background:#2f1b4a;color:#d2a8ff}:root:not([data-theme="light"]) .tag.der{background:#3b2300;color:#f2cc60}}
 .muted{color:var(--muted)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 label.chk{display:inline-flex;gap:6px;align-items:center;font-size:13px}
+select{max-width:100%}
 input,select,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
 textarea{width:100%;min-height:150px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
 canvas{width:100%;aspect-ratio:12/7;background:var(--code);border:1px solid var(--line);border-radius:8px;display:block}
@@ -53,6 +54,8 @@ canvas{width:100%;aspect-ratio:12/7;background:var(--code);border:1px solid var(
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .banner.ok{background:#12261e;color:#56d364}:root:not([data-theme="light"]) .banner.bad{background:#2d1214;color:#ff7b72}}
 h3{font-size:14px;margin:16px 0 6px}
 .week td{vertical-align:middle}
+.chart svg{width:100%;height:auto;display:block}.chart .ax{fill:var(--muted);font-size:17px}.chart .gl{stroke:var(--line);stroke-width:1}
+.chart .bar{fill:var(--accent)}.chart .bar:hover,.chart .pt:hover{opacity:.75}.chart .ln{stroke:var(--accent);stroke-width:2;fill:none}.chart .pt{fill:var(--accent);stroke:var(--card);stroke-width:2}
 details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:10px}
 @media (max-width:520px){main{padding:10px}.card{padding:12px}.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}
  .ctrl{grid-template-columns:1fr 1fr}.ctrl button.b{min-height:52px}}
@@ -83,17 +86,30 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:10px
 </section>
 
 <section id="traj" class="panel">
- <div class="card"><h2>Trajectory</h2><p class="sub">Plot of the x/y values actually reported by the robot, with no unit conversion and no cloud map. It is not an exact floor plan.</p>
-  <div class="row"><label>Points <select id="npts"><option value="500">last 500</option><option value="2000" selected>last 2,000</option><option value="20000">last 20,000</option></select></label></div>
+ <div class="card"><h2>Trajectory</h2><p class="sub">Plot of the x/y values actually reported by the robot, with no unit conversion and no cloud map. It is not an exact floor plan.
+  Unit not confirmed: roombapy documents millimetres, the first recorded run looks like centimetres.</p>
+  <div class="row"><label style="max-width:100%">Show <select id="trajsrc"><option value="live">Live (latest points)</option></select></label>
+   <label id="nptswrap">Points <select id="npts"><option value="500">last 500</option><option value="2000" selected>last 2,000</option><option value="20000">last 20,000</option></select></label></div>
+  <div class="row"><span class="btns"><button class="b" id="rotl" aria-label="Rotate 30 degrees anticlockwise">⟲ 30°</button><button class="b" id="rotr" aria-label="Rotate 30 degrees clockwise">⟳ 30°</button></span>
+   <svg id="compass" width="64" height="64" viewBox="-40 -40 80 80" role="img" aria-label="Direction of theta 0 degrees"></svg>
+   <span class="muted" id="rotinfo" style="font-size:13px"></span></div>
+  <div id="rundetails"></div>
   <canvas id="map" width="1200" height="700"></canvas><p class="muted" id="posinfo"></p></div>
 </section>
 
 <section id="raw" class="panel">
+ <div class="card"><h2>Data size</h2><p class="sub">How much data the lab holds and how fast it grows. Growth and projection are <span class="tag der">DERIVED</span> estimates; the method is shown with them.</p>
+  <div class="stats" id="sizestats"></div>
+  <h3>Database size over time</h3><div id="sizechart" class="chart"></div>
+  <h3>Raw data received per day</h3><div id="dailychart" class="chart"></div>
+  <div class="row btns" style="margin-top:8px"><button class="b" id="sizerefresh">Refresh</button></div>
+  <details><summary>Table view</summary><div class="scroll" id="sizetable"></div></details></div>
  <div class="card"><h2>Raw data log (append-only)</h2><p class="sub">Exact payload of every message, its SHA-256 and the hash chain. Click a number to see how it was transformed.</p>
+  <div id="storage" class="muted" style="font-size:13px;margin-bottom:10px"></div>
   <div id="verifyres"></div>
   <div class="row btns"><button class="b primary" id="verify">Verify integrity</button><button class="b" id="export">Export JSONL</button>
-   <button class="b" id="dbsnap">Copy database to data/snapshots</button></div>
-  <div class="row"><select id="rawop"><option value="">All operations</option><option value="shadow">Shadow (robot state)</option><option value="wifistat">wifistat (signal)</option>
+   <button class="b" id="dbdl">Download database</button><button class="b" id="dbsnap">Copy database to data/snapshots</button><button class="b" id="retain">Check disk space now</button></div>
+  <div class="row"><select id="rawop"><option value="">All operations</option><option value="shadow">Shadow (robot state)</option><option value="wifistat">wifistat (signal, and pose during runs)</option>
    <option value="connection">Connection</option><option value="cache:">roombapy cache</option></select>
    <label class="chk"><input type="checkbox" id="rawerr"> Parse errors only</label><span class="muted" id="counts"></span></div>
   <div class="scroll" id="rawtable"></div></div>

@@ -6,7 +6,11 @@ RAW → PARSED → NORMALISED → INTERPRETED in a web interface that also contr
 
 - Local only: talks to the robot over its local MQTT/TLS interface, no cloud.
 - Phone-friendly control panel (clean, pause, resume, stop, dock) and weekly schedule.
-- Raw data log with integrity verification, transformation view, diagnostics, trajectory.
+- Raw data log with integrity verification, transformation view, diagnostics.
+- Trajectory: live view or any recorded cleaning run, with heading (θ), a θ = 0° compass, 30° display
+  rotation, and a per-run CSV export.
+- One-click download of a consistent copy of the database, plus a daily copy in `data/snapshots`.
+- Data size view: database size over time, raw data per day, growth per day and days left before the clean-up threshold.
 - One Docker container: Python 3.12, [roombapy](https://github.com/pschmitt/roombapy) 2.0.2, FastAPI, SQLite.
 
 Tested with a Roomba 960 on firmware 2.4.17. The iRobot local API is unofficial; a firmware update can
@@ -37,6 +41,9 @@ Then open <http://localhost:8080>.
 | `CALL_TIMEOUT_SECONDS` | Max wait for one command or schedule write |
 | `RECONNECT_SECONDS` | Wait between attempts while the robot cannot be reached at start-up |
 | `SNAPSHOT_HOURS` | Interval between refreshes of the readable database copy |
+| `DISK_THRESHOLD_PCT` | Disk usage (Docker's or the Mac's) that triggers the clean-up (default 75) |
+| `RETENTION_MIN_DAYS` | Data younger than this is never deleted (default 90) |
+| `RETENTION_CHECK_HOURS` | Interval between disk checks (default 6) |
 
 ## Data model
 
@@ -48,7 +55,17 @@ Then open <http://localhost:8080>.
 - `cache:*` rows (transport `roombapy-cache`) are roombapy's accumulated state, not new robot messages.
 - `commands` only records that a command was published; the robot's following state messages show
   whether it was carried out.
-- Coordinates are stored as reported, without unit conversion.
+- Coordinates are stored as reported, without unit conversion. θ is in degrees, anticlockwise in the
+  x/y frame (checked on a recorded run); the x/y unit is not confirmed yet (documented as mm, looks like cm).
+  The 960 sends its pose about once per second during a run, on the MQTT topic named `wifistat`.
+- Runs are derived on demand from `cleanMissionStatus.cycle` (start when it leaves `none`, end when it
+  returns to it); a following `dock` cycle with the same run number is that run's return to the dock. The
+  outcome comes from the `bbmssn` lifetime counters. The rules are versioned in `src/roombalab/runs.py`.
+  Observed on firmware 2.4.17: no pose is sent after Stop nor while the robot drives back to the dock.
+- Retention: when a disk reaches `DISK_THRESHOLD_PCT`, raw rows older than `RETENTION_MIN_DAYS` are
+  archived to `data/archive/*.jsonl.gz` (with SHA-256), then deleted with their derived rows — Wi-Fi signal
+  messages first. Each deletion is itself recorded in the log (`retention:prune`, with the exact seq ranges),
+  so integrity verification accepts those gaps and still reports any row missing without a record.
 
 The live database stays in a Docker volume; read `data/snapshots/roombalab-latest.sqlite` instead
 (see the installation guide, section 11).

@@ -185,6 +185,14 @@ container writes can corrupt it.
 
 For a backup, copy `data/snapshots/` elsewhere.
 
+### Disk space
+
+Every `RETENTION_CHECK_HOURS` (and at start-up) RoombaLab checks Docker's disk and the Mac's disk. If
+either is at or above `DISK_THRESHOLD_PCT`, raw data older than `RETENTION_MIN_DAYS` is archived to
+`data/archive/` (compressed JSONL with a `.sha256`) and then deleted, oldest Wi-Fi signal messages first.
+Recent data is never deleted, so a disk filled by other files can stay above the threshold: the
+**Raw data** tab shows the usage of both disks and the last clean-up. Growth is about 20 MB a day.
+
 ## 12. Update
 
 ```bash

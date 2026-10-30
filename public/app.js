@@ -9,6 +9,8 @@ async function api(url, opts) {
 const post = (url, body) => api(url, {method: "POST", headers: {"content-type": "application/json"}, body: body === undefined ? undefined : JSON.stringify(body)});
 const rawLink = id => id ? `<button class="link" data-raw="${id}">#${id}</button>` : "";
 const fmtTime = iso => iso ? new Date(iso).toLocaleString("en-GB") : "—";
+// Time only when it is today, full date otherwise (keeps the table narrow on a phone).
+const fmtClock = iso => !iso ? "—" : new Date(iso).toDateString() === new Date().toDateString() ? new Date(iso).toLocaleTimeString("en-GB") : fmtTime(iso);
 function ago(iso) {
   if (!iso) return "no message yet";
   const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
@@ -68,8 +70,8 @@ async function loadCommands() {
 }
 async function loadLatest() {
   const a = await api("/api/observations?limit=30&skip_signal=" + !$("#showsignal").checked);
-  $("#latest").innerHTML = "<table><tr><th>Field</th><th>Value</th><th>Raw message</th></tr>" + a.map(x =>
-    `<tr><td class="path">${esc(x.path)}${x.interpretation ? `<div class="muted">${esc(x.interpretation)}</div>` : ""}</td><td><code>${esc(x.value_json)}</code></td><td>${rawLink(x.raw_message_id)}</td></tr>`).join("") + "</table>";
+  $("#latest").innerHTML = "<table><tr><th>Received</th><th>Field</th><th>Value</th><th>Raw message</th></tr>" + a.map(x =>
+    `<tr><td style="white-space:nowrap">${esc(fmtClock(x.observed_at))}</td><td class="path">${esc(x.path)}${x.interpretation ? `<div class="muted">${esc(x.interpretation)}</div>` : ""}</td><td><code>${esc(x.value_json)}</code></td><td>${rawLink(x.raw_message_id)}</td></tr>`).join("") + "</table>";
 }
 $("#showsignal").onchange = loadLatest;
 document.querySelectorAll("[data-cmd]").forEach(b => b.onclick = async () => {
@@ -80,29 +82,112 @@ document.querySelectorAll("[data-cmd]").forEach(b => b.onclick = async () => {
   loadCommands();
 });
 
-// ---- Trajectory tab
+// ---- Trajectory tab: live view or one recorded run
+// Display rotation only (in 30° steps): stored coordinates are never changed. Remembered per browser.
+const ROTATION_KEY = "roombalab.rotationDeg";
+let rotationDeg = 0;
+try { rotationDeg = Number(localStorage.getItem(ROTATION_KEY)) || 0; } catch { /* storage unavailable: start at 0° */ }
+function rotate(step) {
+  rotationDeg = ((rotationDeg + step) % 360 + 360) % 360;
+  try { localStorage.setItem(ROTATION_KEY, rotationDeg); } catch { /* not persisted, still applied */ }
+  loadMap();
+}
+$("#rotl").onclick = () => rotate(30);
+$("#rotr").onclick = () => rotate(-30);
 $("#npts").onchange = () => loadMap();
+$("#trajsrc").onchange = () => loadMap();
+const fmtDur = s => s == null ? "—" : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.round(s % 3600 / 60)} min`;
+let runsCache = [];
+async function loadRunList() {
+  runsCache = await api("/api/runs");
+  const sel = $("#trajsrc"), keep = sel.value;
+  sel.innerHTML = '<option value="live">Live (latest points)</option>' + runsCache.map(r => {
+    const dur = ((r.end ? new Date(r.end.received_at) : new Date()) - new Date(r.start.received_at)) / 1000;
+    return `<option value="${esc(r.id)}">${r.kind === "docking" ? "Docking" : "Run"} ${r.measured.nMssn ? "#" + esc(r.measured.nMssn) : esc(r.id)} · ${esc(fmtTime(r.start.received_at))} · ${fmtDur(dur)} · ${esc(r.derived.outcome)}</option>`;
+  }).join("");
+  sel.value = [...sel.options].some(o => o.value === keep) ? keep : "live";
+}
+function runDetails(r) {
+  const m = r.measured, d = r.derived, dur = ((r.end ? new Date(r.end.received_at) : new Date()) - new Date(r.start.received_at)) / 1000;
+  const cell = (k, v, tag, raw) => stat(k, v, tag, raw);
+  return `<div class="stats" style="margin-bottom:12px">` +
+    cell("Run number", esc(m.nMssn ?? "—"), '<span class="tag raw">MEASURED</span> nMssn') +
+    cell("Started", esc(fmtTime(r.start.received_at)), `<span class="tag raw">MEASURED</span> cycle “${esc(m.cycle)}” · initiator ${esc(m.initiator ?? "—")}`, r.start.raw_id) +
+    cell(r.kind === "docking" ? "Ended" : "Cleaning ended", r.end ? esc(fmtTime(r.end.received_at)) : "ongoing", r.end ? '<span class="tag raw">MEASURED</span> cycle back to “none”' : "", r.end?.raw_id) +
+    (r.return_to_dock ? cell("Return to dock", r.return_to_dock.end ? `${esc(fmtTime(r.return_to_dock.start.received_at))} → ${esc(fmtTime(r.return_to_dock.end.received_at).slice(-8))}` : "on its way",
+      `<span class="tag raw">MEASURED</span> ${esc(r.return_to_dock.phases.join(" → "))} · same run number · ${r.derived.return_leg_positions} positions sent by the robot on the way` +
+      (r.derived.return_leg_positions ? "" : " (the path home is not observable)"), r.return_to_dock.start.raw_id) : "") +
+    cell("Outcome", esc(d.outcome), '<span class="tag der">DERIVED</span> from bbmssn counters') +
+    cell("Duration", fmtDur(dur), '<span class="tag der">DERIVED</span> start → end' + (m.mssnM ? ` · robot says ${esc(m.mssnM)} min` : "")) +
+    cell("Path", `${d.positions} points`, `<span class="tag der">DERIVED</span> length ${esc(d.path_length_reported_units)} (reported units)`) +
+    cell("Phases", esc(r.phases.join(" → ") || "—"), '<span class="tag raw">MEASURED</span>' + (r.errors.length ? ` · errors ${esc(r.errors.join(", "))}` : "")) +
+    `</div><div class="row btns"><button class="b primary" id="runcsv">Export CSV</button><span class="muted" style="font-size:12px">segmentation rules v${esc(d.rules_version)}</span></div>`;
+}
 async function loadMap() {
-  const p = await api("/api/positions?limit=" + $("#npts").value), c = $("#map"), ctx = c.getContext("2d");
+  const src = $("#trajsrc").value, live = src === "live";
+  $("#nptswrap").style.display = live ? "" : "none";
+  $("#rotinfo").textContent = (rotationDeg ? `Display rotated ${rotationDeg}° anticlockwise (data unchanged)` : "No rotation") + " · compass: direction of θ = 0°";
+  if (!runsCache.length || live) loadRunList().catch(() => {});
+  const run = live ? null : runsCache.find(r => r.id === src);
+  $("#rundetails").innerHTML = run ? runDetails(run) : "";
+  if (run) $("#runcsv").onclick = () => { location.href = `/api/runs/${encodeURIComponent(run.id)}/export.csv`; };
+  const raw = await api(live ? "/api/positions?limit=" + $("#npts").value : `/api/runs/${encodeURIComponent(src)}/positions`);
+  const c = $("#map"), ctx = c.getContext("2d");
+  const a = rotationDeg * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
+  const p = raw.map(q => ({...q, x: q.x * cos - q.y * sin, y: q.x * sin + q.y * cos}));  // drawn copy; info text uses raw values
   const css = getComputedStyle(document.documentElement), ink = css.getPropertyValue("--accent"), muted = css.getPropertyValue("--muted");
   ctx.clearRect(0, 0, c.width, c.height);
+  drawCompass();
   if (!p.length) { $("#posinfo").textContent = "No pose coordinates observed. The absence of pose is itself an observation."; return; }
   const xs = p.map(q => q.x), ys = p.map(q => q.y), mnx = Math.min(...xs), mxx = Math.max(...xs), mny = Math.min(...ys), mxy = Math.max(...ys);
-  const pad = 30, s = Math.min((c.width - 2 * pad) / Math.max(1, mxx - mnx), (c.height - 2 * pad) / Math.max(1, mxy - mny));
+  const pad = 100, s = Math.min((c.width - 2 * pad) / Math.max(1, mxx - mnx), (c.height - 2 * pad) / Math.max(1, mxy - mny));  // room for arrow and compass
   const X = x => pad + (x - mnx) * s, Y = y => c.height - pad - (y - mny) * s;
-  ctx.lineWidth = 2; ctx.strokeStyle = ink; ctx.beginPath();
+  ctx.lineWidth = 4; ctx.lineJoin = "round"; ctx.strokeStyle = ink; ctx.beginPath();  // canvas is 1200 px wide, shown much smaller on a phone
   p.forEach((q, i) => i ? ctx.lineTo(X(q.x), Y(q.y)) : ctx.moveTo(X(q.x), Y(q.y))); ctx.stroke();
-  const dotAt = (q, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(q.x), Y(q.y), 7, 0, 7); ctx.fill(); };
+  const dotAt = (q, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(q.x), Y(q.y), 12, 0, 7); ctx.fill(); };
   dotAt(p[0], muted); dotAt(p[p.length - 1], ink);
-  const still = mnx === mxx && mny === mxy;
-  $("#posinfo").innerHTML = `${p.length} positions (${esc(fmtTime(p[0].observed_at))} → ${esc(fmtTime(p[p.length - 1].observed_at))}) · x ${mnx}…${mxx} · y ${mny}…${mxy}` +
+  const last = raw[raw.length - 1];
+  if (last.theta != null) arrow(ctx, X(p[p.length - 1].x), Y(p[p.length - 1].y), last.theta + rotationDeg, 70, ink, 5);
+  // Reported ranges come from the stored values, not from the rotated drawing.
+  const rx = raw.map(q => q.x), ry = raw.map(q => q.y), [rnx, rxx, rny, rxy] = [Math.min(...rx), Math.max(...rx), Math.min(...ry), Math.max(...ry)];
+  const still = rnx === rxx && rny === rxy;
+  $("#posinfo").innerHTML = `${p.length} positions (${esc(fmtTime(raw[0].received_at || raw[0].observed_at))} → ${esc(fmtTime(last.received_at || last.observed_at))}) · stored x ${rnx}…${rxx} · y ${rny}…${rxy}` +
+    ` · latest θ <b>${last.theta ?? "—"}°</b> (as reported)` +
     (still ? " · <b>all identical: the robot has not moved (probably on its dock)</b>" : " · grey dot = start, blue dot = latest position");
+}
+// Arrow from (x0, y0) pointing at `deg` (0 = +x, anticlockwise, as the robot reports θ); screen y points down.
+function arrow(ctx, x0, y0, deg, len, col, width) {
+  const h = deg * Math.PI / 180, x1 = x0 + len * Math.cos(h), y1 = y0 - len * Math.sin(h);
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x1 + 22 * Math.cos(h), y1 - 22 * Math.sin(h));
+  ctx.lineTo(x1 + 16 * Math.cos(h + 2.2), y1 - 16 * Math.sin(h + 2.2)); ctx.lineTo(x1 + 16 * Math.cos(h - 2.2), y1 - 16 * Math.sin(h - 2.2)); ctx.fill();
+}
+// Compass (like a north arrow), outside the plot: where θ = 0° points (the robot's heading on its dock, the x axis)
+// and θ = 90°. θ grows anticlockwise in the x/y frame: checked on run #153, where all 34 straight moves off the
+// x axis matched θ within 15° (median 1.5°). Turns with the display rotation.
+function drawCompass() {
+  const pt = (deg, r) => [r * Math.cos(deg * Math.PI / 180), -r * Math.sin(deg * Math.PI / 180)];
+  const [x0, y0] = pt(rotationDeg, 22), [x9, y9] = pt(rotationDeg + 90, 15), [l0x, l0y] = pt(rotationDeg, 33), [l9x, l9y] = pt(rotationDeg + 90, 32);
+  $("#compass").innerHTML = `<defs><marker id="ah" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+    <g style="color:var(--accent)" fill="none" stroke="currentColor"><circle r="26" stroke="var(--line)" stroke-width="2"/>
+    <line x1="0" y1="0" x2="${x0}" y2="${y0}" stroke-width="4" marker-end="url(#ah)"/>
+    <line x1="0" y1="0" x2="${x9}" y2="${y9}" stroke-width="2" stroke="var(--muted)" stroke-dasharray="3 2"/></g>
+    <text x="${l0x}" y="${l0y}" font-size="11" font-weight="700" text-anchor="middle" dominant-baseline="middle" fill="var(--accent)">0°</text>
+    <text x="${l9x}" y="${l9y}" font-size="9" text-anchor="middle" dominant-baseline="middle" fill="var(--muted)">90°</text>`;
 }
 
 // ---- Raw data tab
+const gb = b => b < 1e9 ? (b / 1e6).toFixed(1) + " MB" : (b / 1e9).toFixed(1) + " GB";
+function renderStorage(s) {
+  const disks = Object.entries(s.usage).map(([k, d]) =>
+    `${esc(k)} <b class="${d.used_pct >= s.threshold_pct ? "bad" : ""}">${d.used_pct} %</b>`).join(" · ");
+  const last = s.last_prune ? ` · last clean-up ${esc(fmtTime(s.last_prune.at))}: ${s.last_prune.rows} rows → <code>${esc(s.last_prune.archive_file)}</code>` : " · no clean-up so far";
+  $("#storage").innerHTML = `Storage: ${disks} (clean-up at ${s.threshold_pct} %, keeps ≥ ${s.min_days} days) · database ${gb(s.db_bytes)}${last}`;
+}
 async function loadRaw() {
   const q = new URLSearchParams({limit: 150, errors_only: $("#rawerr").checked, operation: $("#rawop").value});
-  const [a, n] = await Promise.all([api("/api/raw?" + q), api("/api/counts")]);
+  const [a, n, s] = await Promise.all([api("/api/raw?" + q), api("/api/counts"), api("/api/storage")]);
+  renderStorage(s);
   $("#counts").textContent = `${n.raw ?? 0} messages · ${n.parse_errors} parse errors · ${n.positions} positions`;
   $("#rawtable").innerHTML = "<table><tr><th>#</th><th>Received</th><th>Operation</th><th>SHA-256</th><th>Parsing</th></tr>" + a.map(x =>
     `<tr><td>${rawLink(x.id)}</td><td>${esc(fmtTime(x.received_at))}</td><td class="path">${esc(x.operation)}<div class="muted">${esc(x.transport)}</div></td>` +
@@ -115,14 +200,67 @@ $("#verify").onclick = async () => {
   try {
     const r = await api("/api/verify");
     $("#verifyres").innerHTML = r.ok
-      ? `<div class="banner ok">Chain intact: ${r.checked} messages verified. Last link <code>${esc(r.last_chain_sha256?.slice(0, 16))}…</code></div>`
+      ? `<div class="banner ok">Chain intact: ${r.checked} messages verified${r.recorded_gaps ? `, ${r.recorded_gaps} gaps all recorded as retention deletions` : ""}. Last link <code>${esc(r.last_chain_sha256?.slice(0, 16))}…</code></div>`
       : `<div class="banner bad">Break at seq ${esc(r.break_at_seq)}: ${esc(r.reason)} (${r.checked} valid messages before it).</div>`;
   } catch (e) { $("#verifyres").innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
 };
+$("#retain").onclick = async () => {
+  if (!confirm("Check disk space now? If a disk is over the threshold, raw data older than the minimum age is archived then deleted.")) return;
+  try {
+    const r = await post("/api/retention");
+    $("#verifyres").innerHTML = `<div class="banner ${r.deleted_rows || r.message.startsWith("All") ? "ok" : "bad"}">${esc(r.message)}</div>`;
+    loadRaw();
+  } catch (e) { $("#verifyres").innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
+};
+$("#dbdl").onclick = () => { location.href = "/api/export/db.sqlite"; };
 $("#dbsnap").onclick = async () => {
   try { const r = await post("/api/db-snapshot"); $("#verifyres").innerHTML = `<div class="banner ok">Copy written: data/snapshots/${esc(r.file)} (SHA-256 <code>${esc(r.sha256.slice(0, 16))}…</code>)</div>`; }
   catch (e) { $("#verifyres").innerHTML = `<div class="banner bad">${esc(e.message)}</div>`; }
 };
+
+// ---- Data size (Raw data tab): loaded on opening the tab at most every 5 min, or with Refresh.
+const mb = b => (b / 1e6).toFixed(b < 1e7 ? 2 : 1) + " MB";
+let sizeLoadedAt = 0;
+function loadSizeIfStale() { return Date.now() - sizeLoadedAt > 300000 ? loadSize() : Promise.resolve(); }
+$("#sizerefresh").onclick = () => loadSize();
+// Single-series SVG chart; one axis; each mark carries its value in a tooltip (<title>).
+function svgChart(points, {kind, fmtY, fmtX}) {
+  const W = 600, H = 200, L = 82, R = 12, T = 12, B = 32, iw = W - L - R, ih = H - T - B;
+  const max = Math.max(...points.map(p => p.y), 1), sy = v => T + ih - (v / max) * ih;
+  const grid = [0, 0.5, 1].map(f => `<line class="gl" x1="${L}" x2="${W - R}" y1="${sy(max * f)}" y2="${sy(max * f)}"/><text class="ax" x="${L - 6}" y="${sy(max * f) + 4}" text-anchor="end">${esc(fmtY(max * f))}</text>`).join("");
+  const xl = (i, anchor) => `<text class="ax" x="${kind === "bar" ? L + (i + 0.5) * iw / points.length : L + (points.length > 1 ? i / (points.length - 1) : 0.5) * iw}" y="${H - 8}" text-anchor="${anchor}">${esc(fmtX(points[i].x))}</text>`;
+  let marks;
+  if (kind === "bar") {
+    const bw = iw / points.length, w = Math.min(48, Math.max(2, bw - 2));  // 2px gap between bars, no giant single bar
+    marks = points.map((p, i) => { const x = L + i * bw + (bw - w) / 2, y = sy(p.y), h = Math.max(1, T + ih - y);
+      return `<path class="bar" d="M${x},${T + ih} V${y + Math.min(4, h)} q0,-${Math.min(4, h)} ${Math.min(4, w / 2)},-${Math.min(4, h)} H${x + w - Math.min(4, w / 2)} q${Math.min(4, w / 2)},0 ${Math.min(4, w / 2)},${Math.min(4, h)} V${T + ih} Z"><title>${esc(p.tip)}</title></path>`; }).join("");
+  } else {
+    const sx = i => L + (points.length > 1 ? i / (points.length - 1) : 0.5) * iw;
+    marks = `<polyline class="ln" points="${points.map((p, i) => `${sx(i)},${sy(p.y)}`).join(" ")}"/>` +
+      points.map((p, i) => `<circle class="pt" cx="${sx(i)}" cy="${sy(p.y)}" r="5"><title>${esc(p.tip)}</title></circle>`).join("");
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" role="img">${grid}${marks}${xl(0, "start")}${points.length > 1 ? xl(points.length - 1, "end") : ""}</svg>`;
+}
+async function loadSize() {
+  sizeLoadedAt = Date.now();
+  const h = await api("/api/storage/history"), g = h.growth;
+  $("#sizestats").innerHTML =
+    stat("Database", mb(h.db_bytes), '<span class="tag raw">MEASURED</span> file size') +
+    stat("Raw messages", h.raw_rows.toLocaleString("en-GB"), '<span class="tag raw">MEASURED</span> rows in the log') +
+    stat("Growth", g ? `${g.bytes_per_day >= 0 ? "+" : ""}${mb(g.bytes_per_day)} / day` : "—", g ? `<span class="tag der">DERIVED</span> ${esc(g.method)}` : "not enough data yet") +
+    stat(`Until ${h.threshold_pct} % disk`, h.days_to_threshold == null ? "—" : h.days_to_threshold === 0 ? '<span class="bad">reached</span>' : `≈ ${h.days_to_threshold.toLocaleString("en-GB")} days`,
+      '<span class="tag der">DERIVED</span> at this growth, if nothing else fills the disk; then old data is archived and deleted');
+  $("#sizechart").innerHTML = h.samples.length >= 2
+    ? svgChart(h.samples.map(s => ({x: s.sampled_at, y: s.db_bytes, tip: `${fmtTime(s.sampled_at)}: ${mb(s.db_bytes)} · ${s.raw_rows} messages`})), {kind: "line", fmtY: mb, fmtX: x => fmtTime(x).slice(0, 10)})
+    : `<p class="muted">Collecting: one sample at start-up and every 6 hours (${h.samples.length} so far).</p>`;
+  $("#dailychart").innerHTML = h.daily.length
+    ? svgChart(h.daily.map(d => ({x: d.day, y: d.payload_bytes, tip: `${d.day}: ${mb(d.payload_bytes)} of raw payload · ${d.messages.toLocaleString("en-GB")} messages`})), {kind: "bar", fmtY: mb, fmtX: x => x})
+    : '<p class="muted">No data yet.</p>';
+  $("#sizetable").innerHTML = "<table><tr><th>Day (UTC)</th><th>Messages</th><th>Raw payload</th></tr>" +
+    h.daily.slice().reverse().map(d => `<tr><td>${esc(d.day)}</td><td>${d.messages.toLocaleString("en-GB")}</td><td>${mb(d.payload_bytes)}</td></tr>`).join("") + "</table>" +
+    "<table style=\"margin-top:10px\"><tr><th>Size sample</th><th>Database</th><th>Messages</th></tr>" +
+    h.samples.slice().reverse().slice(0, 50).map(s => `<tr><td>${esc(fmtTime(s.sampled_at))}</td><td>${mb(s.db_bytes)}</td><td>${s.raw_rows}</td></tr>`).join("") + "</table>";
+}
 
 // ---- Transformation tab
 $("#loadt").onclick = () => loadTransform();
@@ -198,7 +336,7 @@ $("#sets").onclick = async () => {
 };
 
 // ---- refresh loop
-const LOADERS = {dash: [loadRobot, loadCommands, loadLatest], traj: [loadMap], raw: [loadRaw], diag: [loadDiag], transform: [], schedule: []};
+const LOADERS = {dash: [loadRobot, loadCommands, loadLatest], traj: [loadMap], raw: [loadRaw, loadSizeIfStale], diag: [loadDiag], transform: [], schedule: []};
 async function refresh() {
   try {
     const s = await api("/api/status");

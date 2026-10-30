@@ -1,7 +1,8 @@
 """Operator settings, read once from the environment (.env via docker compose).
 
 Used by: roombalab.db (DB_PATH), roombalab.robot (ROOMBA_*, CALL_TIMEOUT_SECONDS,
-RECONNECT_SECONDS), roombalab.server (PORT, PUBLIC_DIR).
+RECONNECT_SECONDS), roombalab.server (PORT, PUBLIC_DIR, *_HOURS), roombalab.snapshot (SNAPSHOT_DIR),
+roombalab.retention (DISK_THRESHOLD_PCT, RETENTION_*, ARCHIVE_DIR, WATCHED_DISKS).
 Uses: nothing inside the package.
 """
 
@@ -27,6 +28,16 @@ CALL_TIMEOUT_SECONDS = max(1.0, float(os.environ.get("CALL_TIMEOUT_SECONDS", "15
 # Wait between attempts while the FIRST connection cannot be established.
 # roombapy only supervises reconnection once a first session exists.
 RECONNECT_SECONDS = max(5.0, float(os.environ.get("RECONNECT_SECONDS", "30")))
+
+# Retention (roombalab.retention): when any watched disk is at or above DISK_THRESHOLD_PCT, the oldest raw
+# data is archived to ARCHIVE_DIR then deleted, but never data younger than RETENTION_MIN_DAYS.
+DISK_THRESHOLD_PCT = min(99.0, max(10.0, float(os.environ.get("DISK_THRESHOLD_PCT", "75"))))
+RETENTION_MIN_DAYS = max(1.0, float(os.environ.get("RETENTION_MIN_DAYS", "90")))
+RETENTION_CHECK_HOURS = max(0.25, float(os.environ.get("RETENTION_CHECK_HOURS", "6")))
+ARCHIVE_DIR = Path(os.environ.get("ARCHIVE_DIR", "/data/archive"))
+# Label -> a path on each disk to watch: Docker's disk (database volume) and the Mac's disk (shared folder).
+# A full Mac disk also stops Docker's disk image from growing, so both matter.
+WATCHED_DISKS = {"Docker disk (database)": DB_PATH.parent, "Mac disk (shared folder)": SNAPSHOT_DIR.parent}
 
 
 def robot_configured() -> bool:
